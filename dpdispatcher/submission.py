@@ -169,11 +169,21 @@ class Submission(object):
             self.check_all_finished()
             self.handle_unexpected_submission_state()
 
+        ratio_failure = self.resources.kwargs.get('ratio_failure', 0)
+        async_check = self.resources.kwargs.get('async_check', False)
         while not self.check_all_finished():
             if exit_on_submit is True:
                 dlog.info(f"submission succeeded: {self.submission_hash}")
                 dlog.info(f"at {self.machine.context.remote_root}")
                 return self.serialize()
+            if ratio_failure > 0 and self.check_ratio_failure(ratio_failure):
+                if async_check:
+                    import multiprocessing as mp
+                    mp_ret = mp.Process(target=self.do_async_check)
+                    mp_ret.start()
+                self.remove_unfinished_jobs()
+                break
+
             try:
                 time.sleep(30)
             except (Exception, KeyboardInterrupt, SystemExit) as e:
@@ -239,6 +249,27 @@ class Submission(object):
     #     self.get_submission_state()
 
     # def update_submi
+
+    def check_ratio_failure(self, ratio_failure):
+        status_list = [job.job_state for job in self.belonging_jobs]
+        finished_num = status_list.count(JobStatus.finished)
+        if finished_num / len(self.belonging_jobs) < (1 - ratio_failure):
+            return False
+        else:
+            return True
+
+    def remove_unfinished_jobs(self):
+        for job in self.belonging_jobs:
+            if job.job_state in [JobStatus.finished]:
+                continue
+            self.belonging_jobs.remove(job)
+
+    def do_async_check(self):
+        """
+        1. check the state of unfinished job until they are all finished
+        2. download the results
+        """
+        pass
 
     def check_all_finished(self):
         """check whether all the jobs in the submission.
